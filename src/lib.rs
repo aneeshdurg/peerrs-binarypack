@@ -1,10 +1,12 @@
 // var BufferBuilderExports = require('./bufferbuilder');
-// 
+//
 // window.BufferBuilder = BufferBuilderExports.BufferBuilder;
 // window.binaryFeatures = BufferBuilderExports.binaryFeatures;
 // window.BlobBuilder = BufferBuilderExports.BlobBuilder;
 // window.BinaryPack = require('./binarypack');
 //
+extern crate num;
+
 pub mod binarypack;
 pub mod error;
 
@@ -17,7 +19,8 @@ mod tests {
         match binarypack::unpack(&a) {
             binarypack::Unpacked::Uint8(s) => {
                 println!("u8: {}", s);
-            },
+            }
+            _ => {}
         }
 
         panic!("!");
