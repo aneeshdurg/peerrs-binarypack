@@ -88,6 +88,34 @@ impl Hash for Unpacked {
     }
 }
 
+const MAP_MASK: u8 = 0x80;
+const ARR_MASK: u8 = 0x90;
+const RAW_MASK: u8 = 0xa0;
+const STR_MASK: u8 = 0xb0;
+const INT_MASK: u8 = 0xe0;
+
+const PACKED_NULL: u8 = 0xc0;
+const PACKED_FALSE: u8 = 0xc2;
+const PACKED_TRUE: u8 = 0xc3;
+const PACKED_FLOAT: u8 = 0xca;
+const PACKED_DOUBLE: u8 = 0xcb;
+const PACKED_UINT8: u8 = 0xcc;
+const PACKED_UINT16: u8 = 0xcd;
+const PACKED_UINT32: u8 = 0xce;
+const PACKED_UINT64: u8 = 0xcf;
+const PACKED_INT8: u8 = 0xd0;
+const PACKED_INT16: u8 = 0xd1;
+const PACKED_INT32: u8 = 0xd2;
+const PACKED_INT64: u8 = 0xd3;
+const PACKED_STR_U16: u8 = 0xd8;
+const PACKED_STR_U32: u8 = 0xd9;
+const PACKED_RAW_U16: u8 = 0xda;
+const PACKED_RAW_U32: u8 = 0xdb;
+const PACKED_ARR_U16: u8 = 0xdc;
+const PACKED_ARR_U32: u8 = 0xdd;
+const PACKED_MAP_U16: u8 = 0xde;
+const PACKED_MAP_U32: u8 = 0xdf;
+
 struct Unpacker<'a> {
     data: &'a [u8],
 }
@@ -212,73 +240,74 @@ impl<'a> Unpacker<'a> {
 
     fn unpack(&mut self) -> Result<Unpacked> {
         let type_ = self.unpack_uint8()?;
-        if type_ < 0x80 {
+        if type_ < MAP_MASK {
             return Ok(Unpacked::Uint8(type_));
-        } else if (type_ ^ 0xe0) < 0x20 {
-            return Ok(Unpacked::Int8((type_ ^ 0xe0) as i8 - 0x20));
+        } else if (type_ ^ INT_MASK) < 0x20 {
+            return Ok(Unpacked::Int8((type_ ^ INT_MASK) as i8 - 0x20));
         }
 
-        let size = type_ ^ 0xa0;
-        if size <= 0x0f {
-            return Ok(Unpacked::Raw(self.unpack_raw(size as usize)?));
-        }
-        let size = type_ ^ 0xb0;
-        if size <= 0x0f {
-            return Ok(Unpacked::String(self.unpack_string(size as usize)?));
-        }
-        let size = type_ ^ 0x90;
-        if size <= 0x0f {
-            return Ok(Unpacked::Array(self.unpack_array(size as usize)?));
-        }
-
-        let size = type_ ^ 0x80;
+        let size = type_ ^ MAP_MASK;
         if size <= 0x0f {
             return Ok(Unpacked::Map(self.unpack_map(size as usize)?));
         }
 
+        let size = type_ ^ ARR_MASK;
+        if size <= 0x0f {
+            return Ok(Unpacked::Array(self.unpack_array(size as usize)?));
+        }
+
+        let size = type_ ^ RAW_MASK;
+        if size <= 0x0f {
+            return Ok(Unpacked::Raw(self.unpack_raw(size as usize)?));
+        }
+        let size = type_ ^ STR_MASK;
+        if size <= 0x0f {
+            return Ok(Unpacked::String(self.unpack_string(size as usize)?));
+        }
+
         Ok(match type_ {
-            0xc0 => Unpacked::Null,
-            0xc2 => Unpacked::Bool(false),
-            0xc3 => Unpacked::Bool(true),
-            0xca => Unpacked::Float(self.unpack_float()?),
-            0xcb => Unpacked::Double(self.unpack_double()?),
-            0xcc => Unpacked::Uint8(self.unpack_uint8()?),
-            0xcd => Unpacked::Uint16(self.unpack_uint16()?),
-            0xce => Unpacked::Uint32(self.unpack_uint32()?),
-            0xcf => Unpacked::Uint64(self.unpack_uint64()?),
-            0xd0 => Unpacked::Int8(self.unpack_int8()?),
-            0xd1 => Unpacked::Int16(self.unpack_int16()?),
-            0xd2 => Unpacked::Int32(self.unpack_int32()?),
-            0xd3 => Unpacked::Int64(self.unpack_int64()?),
-            0xd8 => {
+            PACKED_NULL => Unpacked::Null,
+            PACKED_FALSE => Unpacked::Bool(false),
+            PACKED_TRUE => Unpacked::Bool(true),
+            PACKED_FLOAT => Unpacked::Float(self.unpack_float()?),
+            PACKED_DOUBLE => Unpacked::Double(self.unpack_double()?),
+            PACKED_UINT8 => Unpacked::Uint8(self.unpack_uint8()?),
+            PACKED_UINT16 => Unpacked::Uint16(self.unpack_uint16()?),
+            PACKED_UINT32 => Unpacked::Uint32(self.unpack_uint32()?),
+            PACKED_UINT64 => Unpacked::Uint64(self.unpack_uint64()?),
+            PACKED_INT8 => Unpacked::Int8(self.unpack_int8()?),
+            PACKED_INT16 => Unpacked::Int16(self.unpack_int16()?),
+            PACKED_INT32 => Unpacked::Int32(self.unpack_int32()?),
+            PACKED_INT64 => Unpacked::Int64(self.unpack_int64()?),
+            PACKED_STR_U16 => {
               let size = self.unpack_uint16()? as usize;
               Unpacked::String(self.unpack_string(size)?)
             },
-            0xd9 => {
+            PACKED_STR_U32 => {
               let size = self.unpack_uint32()? as usize;
               Unpacked::String(self.unpack_string(size)?)
             },
-            0xda => {
+            PACKED_RAW_U16 => {
               let size = self.unpack_uint16()? as usize;
               Unpacked::Raw(self.unpack_raw(size)?)
             },
-            0xdb => {
+            PACKED_RAW_U32 => {
               let size = self.unpack_uint32()? as usize;
               Unpacked::Raw(self.unpack_raw(size)?)
             },
-            0xdc => {
+            PACKED_ARR_U16 => {
               let size = self.unpack_uint16()? as usize;
               Unpacked::Array(self.unpack_array(size)?)
             },
-            0xdd => {
+            PACKED_ARR_U32 => {
               let size = self.unpack_uint32()? as usize;
               Unpacked::Array(self.unpack_array(size)?)
             },
-            0xde => {
+            PACKED_MAP_U16 => {
               let size = self.unpack_uint16()? as usize;
               Unpacked::Map(self.unpack_map(size)?)
             },
-            0xdf => {
+            PACKED_MAP_U32 => {
               let size = self.unpack_uint32()? as usize;
               Unpacked::Map(self.unpack_map(size)?)
             },
