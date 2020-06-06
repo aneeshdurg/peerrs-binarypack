@@ -1,4 +1,3 @@
-use std::boxed::Box;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
@@ -18,16 +17,20 @@ pub enum Unpacked {
     Int32(i32),
     Int64(i64),
     Float(f32),
-    Double(f32),
+    Double(f64),
+    Bool(bool),
+    Raw(Vec<u8>),
     String(String),
     Null,
-    Array(Box<[Unpacked]>),
+    Undefined,
+    Array(Vec<Unpacked>),
     Map(HashMap<Unpacked, Unpacked>),
 }
 
 impl PartialEq for Unpacked {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Unpacked::Bool(a), Unpacked::Bool(b)) => a == b,
             (Unpacked::Uint8(a), Unpacked::Uint8(b)) => a == b,
             (Unpacked::Uint16(a), Unpacked::Uint16(b)) => a == b,
             (Unpacked::Uint32(a), Unpacked::Uint32(b)) => a == b,
@@ -38,6 +41,7 @@ impl PartialEq for Unpacked {
             (Unpacked::Int64(a), Unpacked::Int64(b)) => a == b,
             (Unpacked::Float(a), Unpacked::Float(b)) => a == b,
             (Unpacked::Double(a), Unpacked::Double(b)) => a == b,
+            (Unpacked::Raw(a), Unpacked::Raw(b)) => a == b,
             (Unpacked::String(a), Unpacked::String(b)) => a == b,
             (Unpacked::Null, Unpacked::Null) => true,
             (Unpacked::Array(a), Unpacked::Array(b)) => {
@@ -120,16 +124,90 @@ impl<'a> Unpacker<'a> {
         self.unpack_unsigned()
     }
 
+    fn unpack_int8(&mut self) -> Result<i8> {
+        self.unpack_unsigned().map(|x: u8| x as i8)
+    }
+
     fn unpack_uint16(&mut self) -> Result<u16> {
         self.unpack_unsigned()
+    }
+
+    fn unpack_int16(&mut self) -> Result<i16> {
+        self.unpack_unsigned().map(|x: u16| x as i16)
     }
 
     fn unpack_uint32(&mut self) -> Result<u32> {
         self.unpack_unsigned()
     }
 
+    fn unpack_int32(&mut self) -> Result<i32> {
+        self.unpack_unsigned().map(|x: u32| x as i32)
+    }
+
     fn unpack_uint64(&mut self) -> Result<u64> {
         self.unpack_unsigned()
+    }
+
+    fn unpack_int64(&mut self) -> Result<i64> {
+        self.unpack_unsigned().map(|x: u64| x as i64)
+    }
+
+    fn unpack_raw(&mut self, size: usize) -> Result<Vec<u8>> {
+        let mut raw = vec!();
+        if self.data.len() < size {
+            return Err(Error::EndOfData);
+        }
+
+        for i in 0..size {
+            raw.push(self.data[i]);
+        }
+        self.data = &self.data[size..];
+
+        Ok(raw)
+    }
+
+    fn unpack_string(&mut self, size: usize) -> Result<String> {
+        Ok(String::from_utf8(self.unpack_raw(size)?)?)
+    }
+
+    fn unpack_array(&mut self, size: usize) -> Result<Vec<Unpacked>> {
+        let mut arr = vec!();
+        for _i in 0..size {
+            arr.push(self.unpack()?);
+        }
+
+        Ok(arr)
+    }
+
+    fn unpack_map(&mut self, size: usize) -> Result<HashMap<Unpacked, Unpacked>> {
+        let mut map = HashMap::new();
+        for _i in 0..size {
+            map.insert(self.unpack()?, self.unpack()?);
+        }
+
+        Ok(map)
+    }
+
+    fn unpack_float(&mut self) -> Result<f32> {
+        let uint32 = self.unpack_uint32()?;
+
+        let sign = (if (uint32 >> 31) == 0 { 1 } else { -1 }) as f32;
+        let exp = ((uint32 >> 23) as i16 & 0xff) - 127;
+        let fraction = ((uint32 & 0x7fffff) | 0x800000) as f32;
+
+        Ok(sign * fraction * 2f32.powf((exp - 23).into()))
+    }
+
+    fn unpack_double(&mut self) -> Result<f64> {
+          let h32 = self.unpack_uint32()?;
+          let l32 = (self.unpack_uint32()?) as f64;
+
+          let sign = (if (h32 >> 31) == 0 { 1 } else { -1 }) as f64;
+          let exp = ((h32 >> 20) as i32 & 0x7ff) - 1023;
+          let hfrac = ((h32 & 0xfffff) | 0x100000) as f64;
+          let frac = hfrac * 2f64.powf((exp - 20).into()) + l32 * 2f64.powf((exp - 52).into());
+
+          Ok(sign * frac)
     }
 
     fn unpack(&mut self) -> Result<Unpacked> {
@@ -140,23 +218,145 @@ impl<'a> Unpacker<'a> {
             return Ok(Unpacked::Int8((type_ ^ 0xe0) as i8 - 0x20));
         }
 
-        panic!("!")
+        let size = type_ ^ 0xa0;
+        if size <= 0x0f {
+            return Ok(Unpacked::Raw(self.unpack_raw(size as usize)?));
+        }
+        let size = type_ ^ 0xb0;
+        if size <= 0x0f {
+            return Ok(Unpacked::String(self.unpack_string(size as usize)?));
+        }
+        let size = type_ ^ 0x90;
+        if size <= 0x0f {
+            return Ok(Unpacked::Array(self.unpack_array(size as usize)?));
+        }
+
+        let size = type_ ^ 0x80;
+        if size <= 0x0f {
+            return Ok(Unpacked::Map(self.unpack_map(size as usize)?));
+        }
+
+        Ok(match type_ {
+            0xc0 => Unpacked::Null,
+            0xc2 => Unpacked::Bool(false),
+            0xc3 => Unpacked::Bool(true),
+            0xca => Unpacked::Float(self.unpack_float()?),
+            0xcb => Unpacked::Double(self.unpack_double()?),
+            0xcc => Unpacked::Uint8(self.unpack_uint8()?),
+            0xcd => Unpacked::Uint16(self.unpack_uint16()?),
+            0xce => Unpacked::Uint32(self.unpack_uint32()?),
+            0xcf => Unpacked::Uint64(self.unpack_uint64()?),
+            0xd0 => Unpacked::Int8(self.unpack_int8()?),
+            0xd1 => Unpacked::Int16(self.unpack_int16()?),
+            0xd2 => Unpacked::Int32(self.unpack_int32()?),
+            0xd3 => Unpacked::Int64(self.unpack_int64()?),
+            0xd8 => {
+              let size = self.unpack_uint16()? as usize;
+              Unpacked::String(self.unpack_string(size)?)
+            },
+            0xd9 => {
+              let size = self.unpack_uint32()? as usize;
+              Unpacked::String(self.unpack_string(size)?)
+            },
+            0xda => {
+              let size = self.unpack_uint16()? as usize;
+              Unpacked::Raw(self.unpack_raw(size)?)
+            },
+            0xdb => {
+              let size = self.unpack_uint32()? as usize;
+              Unpacked::Raw(self.unpack_raw(size)?)
+            },
+            0xdc => {
+              let size = self.unpack_uint16()? as usize;
+              Unpacked::Array(self.unpack_array(size)?)
+            },
+            0xdd => {
+              let size = self.unpack_uint32()? as usize;
+              Unpacked::Array(self.unpack_array(size)?)
+            },
+            0xde => {
+              let size = self.unpack_uint16()? as usize;
+              Unpacked::Map(self.unpack_map(size)?)
+            },
+            0xdf => {
+              let size = self.unpack_uint32()? as usize;
+              Unpacked::Map(self.unpack_map(size)?)
+            },
+
+            _ => Unpacked::Undefined,
+        })
+
     }
 }
 
-pub fn unpack(data: &[u8]) -> Unpacked {
-    Unpacker::new(data).unpack().unwrap()
+pub fn unpack(data: &[u8]) -> Result<Unpacked> {
+    Unpacker::new(data).unpack()
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
 
+    impl Unpacked {
+        fn is_undefined(&self) -> bool {
+            match self {
+                Unpacked::Undefined => true,
+                _ => false,
+            }
+        }
+
+        // fn _pack(&self, packed: &mut Vec<u8>) {
+        //     match self {
+        //         Uint8(a) => {
+        //         },
+        //         Uint16(a) => {
+        //         },
+        //         Uint32(a) => {
+        //         },
+        //         Uint64(a) => {
+        //         },
+        //         Int8(a) => {
+        //         },
+        //         Int16(a) => {
+        //         },
+        //         Int32(a) => {
+        //         },
+        //         Int64(a) => {
+        //         },
+        //         Float(a) => {},
+        //         Double(a) => {},
+        //         Bool(a) => {
+        //         },
+        //         Raw(a) => {},
+        //         String(a) => {},
+        //         Null => {},
+        //         Undefined => {},
+        //         Array(Vec<Unpacked>) => {},
+        //         Map(HashMap<Unpacked => {}, Unpacked>) => {},
+        //     }
+        // }
+
+        // fn pack(&self) -> Vec<u8> {
+        //     let mut packed = vec!();
+        //     self._pack(packed);
+        //     packed
+        // }
+    }
+
+
     #[test]
     fn test_unpack_uint8() {
         let a = [1, 2, 3, 4, 5, 6, 7, 8];
         assert_eq!(Unpacker::new(&a).unpack_uint8().unwrap(), 1);
         assert_eq!(Unpacker::new(&a).unpack().expect("!"), Unpacked::Uint8(1));
+    }
+
+    #[test]
+    fn test_unpack_int8() {
+        let a = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(Unpacker::new(&a).unpack_int8().unwrap(), 1);
+        let a = [255];
+        assert_eq!(Unpacker::new(&a).unpack_int8().unwrap(), -1);
     }
 
     #[test]
@@ -179,16 +379,127 @@ mod test {
             72623859790382856
         );
     }
+
+    #[test]
+    fn test_unpack_raw() {
+        let a = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(Unpacker::new(&a).unpack_raw(3).unwrap(), vec!(1, 2, 3));
+    }
+
+    #[test]
+    fn test_unpack_string() {
+        let a = [0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0x21];
+        assert_eq!(Unpacker::new(&a).unpack_string(a.len()).unwrap(), "hello world!");
+    }
+
+    #[test]
+    fn test_unpack_array() {
+        let a = [1, 2, 3, 4, 5];
+        assert_eq!(
+            Unpacker::new(&a).unpack_array(a.len()).unwrap(),
+            vec!(Unpacked::Uint8(1), Unpacked::Uint8(2), Unpacked::Uint8(3), Unpacked::Uint8(4), Unpacked::Uint8(5)));
+    }
+
+    #[test]
+    fn test_unpack_map() {
+        let a = [1, 2, 3, 4];
+        let mut expected = HashMap::new();
+        expected.insert(Unpacked::Uint8(1), Unpacked::Uint8(2));
+        expected.insert(Unpacked::Uint8(3), Unpacked::Uint8(4));
+        assert_eq!(Unpacker::new(&a).unpack_map(a.len() / 2).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_unpack_float() {
+        // 0b00111110001000000000000000000000 = 0.15625
+        // source: https://en.wikipedia.org/wiki/Single-precision_floating-point_format
+        let a = [0b00111110, 0b00100000, 0b00000000, 0b00000000];
+        assert_eq!(Unpacker::new(&a).unpack_float().unwrap(), 0.15625);
+    }
+
+    #[test]
+    fn test_unpack_double() {
+        // src: https://en.wikipedia.org/wiki/Double-precision_floating-point_format
+        let a = [0b00111111, 0b11010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101];
+        assert_eq!(Unpacker::new(&a).unpack_double().unwrap(), 0.3333333333333333);
+    }
+
+    #[test]
+    fn test_unpack() {
+        let packed = [1];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint8(1));
+
+        let packed = [1 ^ 0xe0];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int8(-31));
+
+        let packed = [2 ^ 0xa0, 1, 2];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Raw(vec!(1, 2)));
+
+        let packed = [2 ^ 0xb0, 65, 66];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::String("AB".to_string()));
+
+        let packed = [2 ^ 0x90, 2 ^ 0xb0, 65, 66, 1];
+        let v = vec!(Unpacked::String("AB".to_string()), Unpacked::Uint8(1));
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Array(v));
+
+        let packed = [2 ^ 0x80, 1 ^ 0xb0, 65, 1, 1 ^ 0xb0, 66, 2];
+        let mut m = HashMap::new();
+        m.insert(Unpacked::String("A".to_string()), Unpacked::Uint8(1));
+        m.insert(Unpacked::String("B".to_string()), Unpacked::Uint8(2));
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Map(m));
+
+        let packed = [0xc0];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Null);
+
+        let packed = [0xc2];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Bool(false));
+
+        let packed = [0xc3];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Bool(true));
+
+        let packed = [0xca, 0b00111110, 0b00100000, 0b00000000, 0b00000000];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Float(0.15625));
+
+        let packed =
+            [0xcb, 0b00111111, 0b11010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Double(0.3333333333333333));
+
+        let packed = [0xcc, 255];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint8(255));
+
+        let packed = [0xcd, 255, 255];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint16(u16::max_value()));
+
+        let packed = [0xce, 255, 255, 255, 255];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint32(u32::max_value()));
+
+        let packed = [0xcf, 255, 255, 255, 255, 255, 255, 255, 255];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint64(u64::max_value()));
+
+        let packed = [0xd0, 255];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int8(-1));
+
+        let packed = [0xd1, 255, 255];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int16(-1));
+
+        let packed = [0xd2, 255, 255, 255, 255];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int32(-1));
+
+        let packed = [0xd3, 255, 255, 255, 255, 255, 255, 255, 255];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int64(-1));
+
+        let packed = [0xd8, 0, 1, 65];
+        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::String("A".to_string()));
+
+        let packed = [0xc1];
+        assert!(Unpacker::new(&packed).unpack().unwrap().is_undefined());
+    }
 }
 
 // var BufferBuilder = require('./bufferbuilder').BufferBuilder;
 // var binaryFeatures = require('./bufferbuilder').binaryFeatures;
 //
 // var BinaryPack = {
-//   unpack: function (data) {
-//     var unpacker = new Unpacker(data);
-//     return unpacker.unpack();
-//   },
 //   pack: function (data) {
 //     var packer = new Packer();
 //     packer.pack(data);
@@ -198,208 +509,6 @@ mod test {
 // };
 //
 // module.exports = BinaryPack;
-//
-// function Unpacker (data) {
-//   // Data is ArrayBuffer
-//   this.index = 0;
-//   this.dataBuffer = data;
-//   this.dataView = new Uint8Array(this.dataBuffer);
-//   this.length = this.dataBuffer.byteLength;
-// }
-//
-// Unpacker.prototype.unpack = function () {
-//   var type = this.unpack_uint8();
-//   if (type < 0x80) {
-//     return type;
-//   } else if ((type ^ 0xe0) < 0x20) {
-//     return (type ^ 0xe0) - 0x20;
-//   }
-//
-//   var size;
-//   if ((size = type ^ 0xa0) <= 0x0f) {
-//     return this.unpack_raw(size);
-//   } else if ((size = type ^ 0xb0) <= 0x0f) {
-//     return this.unpack_string(size);
-//   } else if ((size = type ^ 0x90) <= 0x0f) {
-//     return this.unpack_array(size);
-//   } else if ((size = type ^ 0x80) <= 0x0f) {
-//     return this.unpack_map(size);
-//   }
-//
-//   switch (type) {
-//     case 0xc0:
-//       return null;
-//     case 0xc1:
-//       return undefined;
-//     case 0xc2:
-//       return false;
-//     case 0xc3:
-//       return true;
-//     case 0xca:
-//       return this.unpack_float();
-//     case 0xcb:
-//       return this.unpack_double();
-//     case 0xcc:
-//       return this.unpack_uint8();
-//     case 0xcd:
-//       return this.unpack_uint16();
-//     case 0xce:
-//       return this.unpack_uint32();
-//     case 0xcf:
-//       return this.unpack_uint64();
-//     case 0xd0:
-//       return this.unpack_int8();
-//     case 0xd1:
-//       return this.unpack_int16();
-//     case 0xd2:
-//       return this.unpack_int32();
-//     case 0xd3:
-//       return this.unpack_int64();
-//     case 0xd4:
-//       return undefined;
-//     case 0xd5:
-//       return undefined;
-//     case 0xd6:
-//       return undefined;
-//     case 0xd7:
-//       return undefined;
-//     case 0xd8:
-//       size = this.unpack_uint16();
-//       return this.unpack_string(size);
-//     case 0xd9:
-//       size = this.unpack_uint32();
-//       return this.unpack_string(size);
-//     case 0xda:
-//       size = this.unpack_uint16();
-//       return this.unpack_raw(size);
-//     case 0xdb:
-//       size = this.unpack_uint32();
-//       return this.unpack_raw(size);
-//     case 0xdc:
-//       size = this.unpack_uint16();
-//       return this.unpack_array(size);
-//     case 0xdd:
-//       size = this.unpack_uint32();
-//       return this.unpack_array(size);
-//     case 0xde:
-//       size = this.unpack_uint16();
-//       return this.unpack_map(size);
-//     case 0xdf:
-//       size = this.unpack_uint32();
-//       return this.unpack_map(size);
-//   }
-// };
-//
-// Unpacker.prototype.unpack_int8 = function () {
-//   var uint8 = this.unpack_uint8();
-//   return (uint8 < 0x80) ? uint8 : uint8 - (1 << 8);
-// };
-//
-// Unpacker.prototype.unpack_int16 = function () {
-//   var uint16 = this.unpack_uint16();
-//   return (uint16 < 0x8000) ? uint16 : uint16 - (1 << 16);
-// };
-//
-// Unpacker.prototype.unpack_int32 = function () {
-//   var uint32 = this.unpack_uint32();
-//   return (uint32 < Math.pow(2, 31)) ? uint32
-//     : uint32 - Math.pow(2, 32);
-// };
-//
-// Unpacker.prototype.unpack_int64 = function () {
-//   var uint64 = this.unpack_uint64();
-//   return (uint64 < Math.pow(2, 63)) ? uint64
-//     : uint64 - Math.pow(2, 64);
-// };
-//
-// Unpacker.prototype.unpack_raw = function (size) {
-//   if (this.length < this.index + size) {
-//     throw new Error('BinaryPackFailure: index is out of range' +
-//       ' ' + this.index + ' ' + size + ' ' + this.length);
-//   }
-//   var buf = this.dataBuffer.slice(this.index, this.index + size);
-//   this.index += size;
-//
-//   // buf = util.bufferToString(buf);
-//
-//   return buf;
-// };
-//
-// Unpacker.prototype.unpack_string = function (size) {
-//   var bytes = this.read(size);
-//   var i = 0;
-//   var str = '';
-//   var c;
-//   var code;
-//
-//   while (i < size) {
-//     c = bytes[i];
-//     if (c < 128) {
-//       str += String.fromCharCode(c);
-//       i++;
-//     } else if ((c ^ 0xc0) < 32) {
-//       code = ((c ^ 0xc0) << 6) | (bytes[i + 1] & 63);
-//       str += String.fromCharCode(code);
-//       i += 2;
-//     } else {
-//       code = ((c & 15) << 12) | ((bytes[i + 1] & 63) << 6) |
-//         (bytes[i + 2] & 63);
-//       str += String.fromCharCode(code);
-//       i += 3;
-//     }
-//   }
-//
-//   this.index += size;
-//   return str;
-// };
-//
-// Unpacker.prototype.unpack_array = function (size) {
-//   var objects = new Array(size);
-//   for (var i = 0; i < size; i++) {
-//     objects[i] = this.unpack();
-//   }
-//   return objects;
-// };
-//
-// Unpacker.prototype.unpack_map = function (size) {
-//   var map = {};
-//   for (var i = 0; i < size; i++) {
-//     var key = this.unpack();
-//     var value = this.unpack();
-//     map[key] = value;
-//   }
-//   return map;
-// };
-//
-// Unpacker.prototype.unpack_float = function () {
-//   var uint32 = this.unpack_uint32();
-//   var sign = uint32 >> 31;
-//   var exp = ((uint32 >> 23) & 0xff) - 127;
-//   var fraction = (uint32 & 0x7fffff) | 0x800000;
-//   return (sign === 0 ? 1 : -1) *
-//     fraction * Math.pow(2, exp - 23);
-// };
-//
-// Unpacker.prototype.unpack_double = function () {
-//   var h32 = this.unpack_uint32();
-//   var l32 = this.unpack_uint32();
-//   var sign = h32 >> 31;
-//   var exp = ((h32 >> 20) & 0x7ff) - 1023;
-//   var hfrac = (h32 & 0xfffff) | 0x100000;
-//   var frac = hfrac * Math.pow(2, exp - 20) +
-//     l32 * Math.pow(2, exp - 52);
-//   return (sign === 0 ? 1 : -1) * frac;
-// };
-//
-// Unpacker.prototype.read = function (length) {
-//   var j = this.index;
-//   if (j + length <= this.length) {
-//     return this.dataView.subarray(j, j + length);
-//   } else {
-//     throw new Error('BinaryPackFailure: read index out of range');
-//   }
-// };
-//
 // function Packer () {
 //   this.bufferBuilder = new BufferBuilder();
 // }
