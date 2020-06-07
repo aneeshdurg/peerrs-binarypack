@@ -7,6 +7,7 @@ use num::{NumCast, Unsigned};
 
 use crate::error::{Error, Result};
 
+/// An enum representing possible unpacked structures
 #[derive(Clone, Debug)]
 pub enum Unpacked {
     Uint8(u8),
@@ -118,6 +119,7 @@ const PACKED_ARR_U32: u8 = 0xdd;
 const PACKED_MAP_U16: u8 = 0xde;
 const PACKED_MAP_U32: u8 = 0xdf;
 
+/// An object that can unpack the js-binarypack format
 pub struct Unpacker<'a> {
     data: &'a [u8],
 }
@@ -311,6 +313,7 @@ impl<'a> Unpacker<'a> {
     }
 }
 
+/// Unpacks data in the js-binarypack format
 pub fn unpack(data: &[u8]) -> Result<Unpacked> {
     Unpacker::new(data).unpack()
 }
@@ -459,6 +462,7 @@ impl Unpacked {
         }
     }
 
+    /// Pack a value into the js-binarypack format
     pub fn pack(&self) -> Vec<u8> {
         let mut packed = vec![];
         self._pack(&mut packed);
