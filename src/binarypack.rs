@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
+use std::mem;
 
 use num::{NumCast, Unsigned};
 
@@ -217,25 +218,15 @@ impl<'a> Unpacker<'a> {
     }
 
     fn unpack_float(&mut self) -> Result<f32> {
-        let uint32 = self.unpack_uint32()?;
-
-        let sign = (if (uint32 >> 31) == 0 { 1 } else { -1 }) as f32;
-        let exp = ((uint32 >> 23) as i16 & 0xff) - 127;
-        let fraction = ((uint32 & 0x7fffff) | 0x800000) as f32;
-
-        Ok(sign * fraction * 2f32.powf((exp - 23).into()))
+        let i = self.unpack_uint32()?;
+        let f: f32 = unsafe {mem::transmute(i)};
+        Ok(f)
     }
 
     fn unpack_double(&mut self) -> Result<f64> {
-          let h32 = self.unpack_uint32()?;
-          let l32 = (self.unpack_uint32()?) as f64;
-
-          let sign = (if (h32 >> 31) == 0 { 1 } else { -1 }) as f64;
-          let exp = ((h32 >> 20) as i32 & 0x7ff) - 1023;
-          let hfrac = ((h32 & 0xfffff) | 0x100000) as f64;
-          let frac = hfrac * 2f64.powf((exp - 20).into()) + l32 * 2f64.powf((exp - 52).into());
-
-          Ok(sign * frac)
+        let i = self.unpack_uint64()?;
+        let f: f64 = unsafe {mem::transmute(i)};
+        Ok(f)
     }
 
     fn unpack(&mut self) -> Result<Unpacked> {
@@ -334,42 +325,49 @@ mod test {
             }
         }
 
-        // fn _pack(&self, packed: &mut Vec<u8>) {
-        //     match self {
-        //         Uint8(a) => {
-        //         },
-        //         Uint16(a) => {
-        //         },
-        //         Uint32(a) => {
-        //         },
-        //         Uint64(a) => {
-        //         },
-        //         Int8(a) => {
-        //         },
-        //         Int16(a) => {
-        //         },
-        //         Int32(a) => {
-        //         },
-        //         Int64(a) => {
-        //         },
-        //         Float(a) => {},
-        //         Double(a) => {},
-        //         Bool(a) => {
-        //         },
-        //         Raw(a) => {},
-        //         String(a) => {},
-        //         Null => {},
-        //         Undefined => {},
-        //         Array(Vec<Unpacked>) => {},
-        //         Map(HashMap<Unpacked => {}, Unpacked>) => {},
-        //     }
-        // }
+        fn _pack(&self, packed: &mut Vec<u8>) {
+            match self {
+                Unpacked::Uint8(a) => {
+                    if *a < MAP_MASK {
+                        packed.push(*a);
+                    } else {
+                        packed.push(PACKED_UINT8);
+                        packed.push(*a);
+                    }
+                },
+                _ => unimplemented!(),
+                // Uint16(a) => {
+                // },
+                // Uint32(a) => {
+                // },
+                // Uint64(a) => {
+                // },
+                // Int8(a) => {
+                // },
+                // Int16(a) => {
+                // },
+                // Int32(a) => {
+                // },
+                // Int64(a) => {
+                // },
+                // Float(a) => {},
+                // Double(a) => {},
+                // Bool(a) => {
+                // },
+                // Raw(a) => {},
+                // String(a) => {},
+                // Null => {},
+                // Undefined => {},
+                // Array(Vec<Unpacked>) => {},
+                // Map(HashMap<Unpacked => {}, Unpacked>) => {},
+            }
+        }
 
-        // fn pack(&self) -> Vec<u8> {
-        //     let mut packed = vec!();
-        //     self._pack(packed);
-        //     packed
-        // }
+        fn pack(&self) -> Vec<u8> {
+            let mut packed = vec!();
+            self._pack(&mut packed);
+            packed
+        }
     }
 
 
@@ -522,6 +520,12 @@ mod test {
 
         let packed = [0xc1];
         assert!(Unpacker::new(&packed).unpack().unwrap().is_undefined());
+    }
+
+    #[test]
+    fn pack_uint8() {
+        assert_eq!(Unpacked::Uint8(0x79).pack(), vec!(0x79));
+        assert_eq!(Unpacked::Uint8(0x80).pack(), vec!(0xcc, 0x80));
     }
 }
 
