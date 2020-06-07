@@ -1,5 +1,5 @@
-use std::string::FromUtf8Error;
 use std::result;
+use std::string::FromUtf8Error;
 
 #[derive(Debug)]
 pub enum Error {

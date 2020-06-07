@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::mem::size_of;
 use std::mem;
+use std::mem::size_of;
 
 use num::{NumCast, Unsigned};
 
@@ -182,7 +182,7 @@ impl<'a> Unpacker<'a> {
     }
 
     fn unpack_raw(&mut self, size: usize) -> Result<Vec<u8>> {
-        let mut raw = vec!();
+        let mut raw = vec![];
         if self.data.len() < size {
             return Err(Error::EndOfData);
         }
@@ -200,7 +200,7 @@ impl<'a> Unpacker<'a> {
     }
 
     fn unpack_array(&mut self, size: usize) -> Result<Vec<Unpacked>> {
-        let mut arr = vec!();
+        let mut arr = vec![];
         for _i in 0..size {
             arr.push(self.unpack()?);
         }
@@ -219,13 +219,13 @@ impl<'a> Unpacker<'a> {
 
     fn unpack_float(&mut self) -> Result<f32> {
         let i = self.unpack_uint32()?;
-        let f: f32 = unsafe {mem::transmute(i)};
+        let f: f32 = unsafe { mem::transmute(i) };
         Ok(f)
     }
 
     fn unpack_double(&mut self) -> Result<f64> {
         let i = self.unpack_uint64()?;
-        let f: f64 = unsafe {mem::transmute(i)};
+        let f: f64 = unsafe { mem::transmute(i) };
         Ok(f)
     }
 
@@ -271,41 +271,40 @@ impl<'a> Unpacker<'a> {
             PACKED_INT32 => Unpacked::Int32(self.unpack_int32()?),
             PACKED_INT64 => Unpacked::Int64(self.unpack_int64()?),
             PACKED_STR_U16 => {
-              let size = self.unpack_uint16()? as usize;
-              Unpacked::String(self.unpack_string(size)?)
-            },
+                let size = self.unpack_uint16()? as usize;
+                Unpacked::String(self.unpack_string(size)?)
+            }
             PACKED_STR_U32 => {
-              let size = self.unpack_uint32()? as usize;
-              Unpacked::String(self.unpack_string(size)?)
-            },
+                let size = self.unpack_uint32()? as usize;
+                Unpacked::String(self.unpack_string(size)?)
+            }
             PACKED_RAW_U16 => {
-              let size = self.unpack_uint16()? as usize;
-              Unpacked::Raw(self.unpack_raw(size)?)
-            },
+                let size = self.unpack_uint16()? as usize;
+                Unpacked::Raw(self.unpack_raw(size)?)
+            }
             PACKED_RAW_U32 => {
-              let size = self.unpack_uint32()? as usize;
-              Unpacked::Raw(self.unpack_raw(size)?)
-            },
+                let size = self.unpack_uint32()? as usize;
+                Unpacked::Raw(self.unpack_raw(size)?)
+            }
             PACKED_ARR_U16 => {
-              let size = self.unpack_uint16()? as usize;
-              Unpacked::Array(self.unpack_array(size)?)
-            },
+                let size = self.unpack_uint16()? as usize;
+                Unpacked::Array(self.unpack_array(size)?)
+            }
             PACKED_ARR_U32 => {
-              let size = self.unpack_uint32()? as usize;
-              Unpacked::Array(self.unpack_array(size)?)
-            },
+                let size = self.unpack_uint32()? as usize;
+                Unpacked::Array(self.unpack_array(size)?)
+            }
             PACKED_MAP_U16 => {
-              let size = self.unpack_uint16()? as usize;
-              Unpacked::Map(self.unpack_map(size)?)
-            },
+                let size = self.unpack_uint16()? as usize;
+                Unpacked::Map(self.unpack_map(size)?)
+            }
             PACKED_MAP_U32 => {
-              let size = self.unpack_uint32()? as usize;
-              Unpacked::Map(self.unpack_map(size)?)
-            },
+                let size = self.unpack_uint32()? as usize;
+                Unpacked::Map(self.unpack_map(size)?)
+            }
 
             _ => Unpacked::Undefined,
         })
-
     }
 }
 
@@ -334,10 +333,14 @@ mod test {
                         packed.push(PACKED_UINT8);
                         packed.push(*a);
                     }
+                }
+                Unpacked::Uint16(a) => {
+                    packed.push(PACKED_UINT16);
+                    let bytes: [u8; 2] = unsafe {mem::transmute(*a)};
+                    for b in bytes.iter().rev() {
+                        packed.push(*b);
+                    }
                 },
-                _ => unimplemented!(),
-                // Uint16(a) => {
-                // },
                 // Uint32(a) => {
                 // },
                 // Uint64(a) => {
@@ -350,26 +353,42 @@ mod test {
                 // },
                 // Int64(a) => {
                 // },
-                // Float(a) => {},
-                // Double(a) => {},
-                // Bool(a) => {
-                // },
+                Unpacked::Float(f) => {
+                    let bytes: [u8; 4] = unsafe { mem::transmute(*f) };
+                    packed.push(PACKED_FLOAT);
+                    for b in bytes.iter().rev() {
+                        packed.push(*b);
+                    }
+                },
+                Unpacked::Double(f) => {
+                    let bytes: [u8; 8] = unsafe { mem::transmute(*f) };
+                    packed.push(PACKED_DOUBLE);
+                    for b in bytes.iter().rev() {
+                        packed.push(*b);
+                    }
+                },
+                Unpacked::Bool(b) => {
+                    match b {
+                        true => {packed.push(PACKED_TRUE)},
+                        false => {packed.push(PACKED_FALSE)},
+                    };
+                },
                 // Raw(a) => {},
                 // String(a) => {},
-                // Null => {},
+                Unpacked::Null => { packed.push(PACKED_NULL); },
                 // Undefined => {},
                 // Array(Vec<Unpacked>) => {},
                 // Map(HashMap<Unpacked => {}, Unpacked>) => {},
+                _ => unimplemented!(),
             }
         }
 
         fn pack(&self) -> Vec<u8> {
-            let mut packed = vec!();
+            let mut packed = vec![];
             self._pack(&mut packed);
             packed
         }
     }
-
 
     #[test]
     fn test_unpack_uint8() {
@@ -415,8 +434,13 @@ mod test {
 
     #[test]
     fn test_unpack_string() {
-        let a = [0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0x21];
-        assert_eq!(Unpacker::new(&a).unpack_string(a.len()).unwrap(), "hello world!");
+        let a = [
+            0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0x21,
+        ];
+        assert_eq!(
+            Unpacker::new(&a).unpack_string(a.len()).unwrap(),
+            "hello world!"
+        );
     }
 
     #[test]
@@ -424,7 +448,14 @@ mod test {
         let a = [1, 2, 3, 4, 5];
         assert_eq!(
             Unpacker::new(&a).unpack_array(a.len()).unwrap(),
-            vec!(Unpacked::Uint8(1), Unpacked::Uint8(2), Unpacked::Uint8(3), Unpacked::Uint8(4), Unpacked::Uint8(5)));
+            vec!(
+                Unpacked::Uint8(1),
+                Unpacked::Uint8(2),
+                Unpacked::Uint8(3),
+                Unpacked::Uint8(4),
+                Unpacked::Uint8(5)
+            )
+        );
     }
 
     #[test]
@@ -447,8 +478,14 @@ mod test {
     #[test]
     fn test_unpack_double() {
         // src: https://en.wikipedia.org/wiki/Double-precision_floating-point_format
-        let a = [0b00111111, 0b11010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101];
-        assert_eq!(Unpacker::new(&a).unpack_double().unwrap(), 0.3333333333333333);
+        let a = [
+            0b00111111, 0b11010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101,
+            0b01010101,
+        ];
+        assert_eq!(
+            Unpacker::new(&a).unpack_double().unwrap(),
+            0.3333333333333333
+        );
     }
 
     #[test]
@@ -457,16 +494,25 @@ mod test {
         assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint8(1));
 
         let packed = [1 ^ 0xe0];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int8(-31));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Int8(-31)
+        );
 
         let packed = [2 ^ 0xa0, 1, 2];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Raw(vec!(1, 2)));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Raw(vec!(1, 2))
+        );
 
         let packed = [2 ^ 0xb0, 65, 66];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::String("AB".to_string()));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::String("AB".to_string())
+        );
 
         let packed = [2 ^ 0x90, 2 ^ 0xb0, 65, 66, 1];
-        let v = vec!(Unpacked::String("AB".to_string()), Unpacked::Uint8(1));
+        let v = vec![Unpacked::String("AB".to_string()), Unpacked::Uint8(1)];
         assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Array(v));
 
         let packed = [2 ^ 0x80, 1 ^ 0xb0, 65, 1, 1 ^ 0xb0, 66, 2];
@@ -479,44 +525,82 @@ mod test {
         assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Null);
 
         let packed = [0xc2];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Bool(false));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Bool(false)
+        );
 
         let packed = [0xc3];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Bool(true));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Bool(true)
+        );
 
         let packed = [0xca, 0b00111110, 0b00100000, 0b00000000, 0b00000000];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Float(0.15625));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Float(0.15625)
+        );
 
-        let packed =
-            [0xcb, 0b00111111, 0b11010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Double(0.3333333333333333));
+        let packed = [
+            0xcb, 0b00111111, 0b11010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101,
+            0b01010101, 0b01010101,
+        ];
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Double(0.3333333333333333)
+        );
 
         let packed = [0xcc, 255];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint8(255));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Uint8(255)
+        );
 
         let packed = [0xcd, 255, 255];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint16(u16::max_value()));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Uint16(u16::max_value())
+        );
 
         let packed = [0xce, 255, 255, 255, 255];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint32(u32::max_value()));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Uint32(u32::max_value())
+        );
 
         let packed = [0xcf, 255, 255, 255, 255, 255, 255, 255, 255];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Uint64(u64::max_value()));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Uint64(u64::max_value())
+        );
 
         let packed = [0xd0, 255];
         assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int8(-1));
 
         let packed = [0xd1, 255, 255];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int16(-1));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Int16(-1)
+        );
 
         let packed = [0xd2, 255, 255, 255, 255];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int32(-1));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Int32(-1)
+        );
 
         let packed = [0xd3, 255, 255, 255, 255, 255, 255, 255, 255];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::Int64(-1));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::Int64(-1)
+        );
 
         let packed = [0xd8, 0, 1, 65];
-        assert_eq!(Unpacker::new(&packed).unpack().unwrap(), Unpacked::String("A".to_string()));
+        assert_eq!(
+            Unpacker::new(&packed).unpack().unwrap(),
+            Unpacked::String("A".to_string())
+        );
 
         let packed = [0xc1];
         assert!(Unpacker::new(&packed).unpack().unwrap().is_undefined());
@@ -526,6 +610,56 @@ mod test {
     fn pack_uint8() {
         assert_eq!(Unpacked::Uint8(0x79).pack(), vec!(0x79));
         assert_eq!(Unpacked::Uint8(0x80).pack(), vec!(0xcc, 0x80));
+
+        let expected = Unpacked::Uint8(100u8);
+        assert_eq!(Unpacker::new(&expected.pack()).unpack().unwrap(), expected);
+    }
+
+    #[test]
+    fn pack_uint16() {
+        assert_eq!(Unpacked::Uint16(258).pack(), vec!(0xcd, 0x1, 0x2));
+
+        let expected = Unpacked::Uint16(258);
+        assert_eq!(Unpacker::new(&expected.pack()).unpack().unwrap(), expected);
+    }
+
+    #[test]
+    fn pack_float() {
+        assert_eq!(
+            Unpacked::Float(0.15625).pack(),
+            vec!(0xca, 0b00111110, 0b00100000, 0b00000000, 0b00000000)
+        );
+
+        let expected = Unpacked::Float(0.15625);
+        assert_eq!(Unpacker::new(&expected.pack()).unpack().unwrap(), expected);
+    }
+
+    #[test]
+    fn pack_double() {
+        assert_eq!(
+            Unpacked::Double(0.3333333333333333).pack(),
+            vec!(
+                0xcb, 0b00111111, 0b11010101, 0b01010101, 0b01010101, 0b01010101, 0b01010101,
+                0b01010101, 0b01010101
+            )
+        );
+
+        let expected = Unpacked::Double(0.3333333333333333);
+        assert_eq!(Unpacker::new(&expected.pack()).unpack().unwrap(), expected);
+    }
+
+    #[test]
+    fn pack_bool() {
+        let expected = Unpacked::Bool(true);
+        assert_eq!(Unpacker::new(&expected.pack()).unpack().unwrap(), expected);
+
+        let expected = Unpacked::Bool(false);
+        assert_eq!(Unpacker::new(&expected.pack()).unpack().unwrap(), expected);
+    }
+    #[test]
+    fn pack_null() {
+        let expected = Unpacked::Null;
+        assert_eq!(Unpacker::new(&expected.pack()).unpack().unwrap(), expected);
     }
 }
 
